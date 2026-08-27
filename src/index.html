@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Kenteken Zoeker" />
+  <title>🏎️ Kenteken Zoeker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="manifest" href="manifest.json" />
+</head>
+<body class="bg-gray-950 text-white min-h-screen p-4 font-sans">
+
+  <h1 class="text-2xl font-bold text-yellow-400 mb-4">🏎️ Kenteken Zoeker</h1>
+
+  <!-- Search inputs -->
+  <div class="flex flex-col gap-3 mb-4">
+    <input id="inpKenteken" type="text" placeholder="Kenteken (bijv. SIDZ26 of gedeeltelijk)"
+      class="rounded-xl p-3 bg-gray-800 text-white placeholder-gray-500 uppercase tracking-widest text-lg" />
+
+    <div class="flex gap-2">
+      <input id="inpMerk" type="text" placeholder="Merk (bijv. Ferrari)"
+        class="flex-1 rounded-xl p-3 bg-gray-800 text-white placeholder-gray-500" />
+      <input id="inpLetters" type="text" placeholder="Bevat (bijv. 55)"
+        class="w-28 rounded-xl p-3 bg-gray-800 text-white placeholder-gray-500 uppercase" />
+    </div>
+
+    <button onclick="zoek()"
+      class="rounded-xl p-3 bg-yellow-400 text-gray-900 font-bold text-lg active:bg-yellow-300">
+      🔍 Zoeken
+    </button>
+  </div>
+
+  <!-- Status -->
+  <p id="status" class="text-gray-400 text-sm mb-3"></p>
+
+  <!-- Results -->
+  <div id="resultaten" class="flex flex-col gap-3"></div>
+
+  <script>
+    const BASE = "https://opendata.rdw.nl/resource/m9d7-ebf2.json";
+
+    async function zoek() {
+      const kenteken = document.getElementById("inpKenteken").value.replace(/-/g, "").toUpperCase().trim();
+      const merk     = document.getElementById("inpMerk").value.trim().toUpperCase();
+      const letters  = document.getElementById("inpLetters").value.replace(/-/g, "").toUpperCase().trim();
+
+      const setStatus = t => document.getElementById("status").textContent = t;
+      const container = document.getElementById("resultaten");
+      container.innerHTML = "";
+      setStatus("⏳ Zoeken...");
+
+      // Fixed filter: only Personenauto's
+      const filters = ["voertuigsoort='Personenauto'"];
+
+      if (kenteken) {
+        // Exact match first; if partial (< 6 chars) do a LIKE search
+        if (kenteken.length >= 6) {
+          filters.push(`kenteken='${kenteken}'`);
+        } else {
+          filters.push(`starts_with(kenteken,'${kenteken}')`);
+        }
+      }
+
+      if (merk)    filters.push(`upper(merk)='${merk}'`);
+      if (letters) filters.push(`contains(kenteken,'${letters}')`);
+
+      if (filters.length <= 1 && !merk && !letters && !kenteken) {
+        setStatus("⚠️ Vul minimaal één zoekveld in.");
+        return;
+      }
+
+      const params = new URLSearchParams({
+        $where: filters.join(" AND "),
+        $limit: 50,
+        $order: "merk ASC"
+      });
+
+      try {
+        const resp = await fetch(`${BASE}?${params}`);
+        const data = await resp.json();
+
+        if (!data.length) {
+          setStatus("❌ Geen resultaten gevonden.");
+          return;
+        }
+
+        setStatus(`✅ ${data.length} resultaat/resultaten`);
+        data.forEach(v => container.appendChild(maakKaart(v)));
+      } catch (e) {
+        setStatus("🔴 Fout bij ophalen: " + e.message);
+      }
+    }
+
+    function formatKenteken(raw) {
+      if (!raw || raw === '-') return raw;
+      // Split on transitions between letters and digits
+      const parts = raw.match(/[A-Z]+|\d+/g) ?? [];
+      // Split any group of 4+ characters in half
+      const segments = parts.flatMap(p => {
+        if (p.length >= 4) {
+          const mid = Math.ceil(p.length / 2);
+          return [p.slice(0, mid), p.slice(mid)];
+        }
+        return [p];
+      });
+      return segments.join('-');
+    }
+
+    function maakKaart(v) {
+      const div = document.createElement("div");
+      div.className = "bg-gray-800 rounded-2xl p-4 shadow-lg";
+
+      const kenteken = v.kenteken ?? "-";
+      const formatted = formatKenteken(kenteken);
+
+      // Make the card a clickable link to Autoweek kentekencheck
+      div.style.cursor = "pointer";
+      div.onclick = () => window.open(`https://www.autoweek.nl/kentekencheck/${formatted}/`, "_blank");
+
+      div.innerHTML = `
+        <div class="flex justify-between items-start mb-2">
+          <span class="text-yellow-400 font-bold text-xl tracking-widest">${formatted}</span>
+          <span class="text-xs text-gray-500">↗ autoweek</span>
+        </div>
+        <div class="text-white text-lg font-semibold">${v.merk ?? ""} ${v.handelsbenaming ?? ""}</div>
+        <div class="mt-2 grid grid-cols-2 gap-1 text-sm text-gray-300">
+          ${rij("🎨 Kleur", v.eerste_kleur)}
+          ${rij("📅 Toelating", formatDatum(v.datum_eerste_toelating))}
+          ${rij("⚙️ Brandstof", v.brandstof_omschrijving)}
+          ${rij("💨 CO2", v.co2_uitstoot_gecombineerd ? v.co2_uitstoot_gecombineerd + " g/km" : null)}
+          ${rij("🏋️ Massa", v.massa_rijklaar ? v.massa_rijklaar + " kg" : null)}
+          ${rij("🔢 Cilinders", v.aantal_cilinders)}
+          ${rij("💪 Vermogen", v.nettomaximumvermogen ? v.nettomaximumvermogen + " kW" : null)}
+        </div>`;
+      return div;
+    }
+
+    function rij(label, waarde) {
+      if (!waarde) return "";
+      return `<div>${label}</div><div class="font-medium text-white">${waarde}</div>`;
+    }
+
+    function formatDatum(d) {
+      if (!d || d.length < 8) return d ?? "-";
+      return `${d.slice(6,8)}-${d.slice(4,6)}-${d.slice(0,4)}`;
+    }
+
+    // Search on Enter key
+    document.addEventListener("keydown", e => { if (e.key === "Enter") zoek(); });
+  </script>
+</body>
+</html>
