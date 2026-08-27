@@ -34,11 +34,30 @@
   <!-- Status -->
   <p id="status" class="text-gray-400 text-sm mb-3"></p>
 
+  <!-- Result filters -->
+  <div id="resultaatFilters" class="hidden grid grid-cols-2 gap-2 mb-4">
+    <label class="text-sm text-gray-300">
+      Merk
+      <select id="filterMerk"
+        class="mt-1 w-full rounded-xl p-3 bg-gray-800 text-white">
+        <option value="">Alle merken</option>
+      </select>
+    </label>
+    <label class="text-sm text-gray-300">
+      Kleur
+      <select id="filterKleur"
+        class="mt-1 w-full rounded-xl p-3 bg-gray-800 text-white">
+        <option value="">Alle kleuren</option>
+      </select>
+    </label>
+  </div>
+
   <!-- Results -->
   <div id="resultaten" class="flex flex-col gap-3"></div>
 
   <script>
     const BASE = "https://opendata.rdw.nl/resource/m9d7-ebf2.json";
+    let zoekresultaten = [];
 
     async function zoek() {
       const kenteken = document.getElementById("inpKenteken").value.replace(/-/g, "").toUpperCase().trim();
@@ -48,6 +67,8 @@
       const setStatus = t => document.getElementById("status").textContent = t;
       const container = document.getElementById("resultaten");
       container.innerHTML = "";
+      zoekresultaten = [];
+      verbergResultaatFilters();
       setStatus("⏳ Zoeken...");
 
       // Fixed filter: only Personenauto's
@@ -78,17 +99,94 @@
 
       try {
         const resp = await fetch(`${BASE}?${params}`);
+        if (!resp.ok) {
+          throw new Error(`RDW gaf status ${resp.status}`);
+        }
+
         const data = await resp.json();
+        if (!Array.isArray(data)) {
+          throw new Error("RDW gaf een onverwacht antwoord");
+        }
 
         if (!data.length) {
           setStatus("❌ Geen resultaten gevonden.");
           return;
         }
 
-        setStatus(`✅ ${data.length} resultaat/resultaten`);
-        data.forEach(v => container.appendChild(maakKaart(v)));
+        zoekresultaten = data;
+        if (data.length > 1) {
+          toonResultaatFilters(data);
+        }
+        toonGefilterdeResultaten();
       } catch (e) {
         setStatus("🔴 Fout bij ophalen: " + e.message);
+      }
+    }
+
+    function uniekeGesorteerdeWaarden(voertuigen, veld) {
+      return [...new Set(voertuigen.map(voertuig => voertuig[veld]).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, "nl"));
+    }
+
+    function vulFilterOpties(select, waarden) {
+      for (const waarde of waarden) {
+        const optie = document.createElement("option");
+        optie.value = waarde;
+        optie.textContent = waarde;
+        select.appendChild(optie);
+      }
+    }
+
+    function toonResultaatFilters(voertuigen) {
+      const merkFilter = document.getElementById("filterMerk");
+      const kleurFilter = document.getElementById("filterKleur");
+
+      merkFilter.value = "";
+      kleurFilter.value = "";
+      merkFilter.length = 1;
+      kleurFilter.length = 1;
+
+      vulFilterOpties(merkFilter, uniekeGesorteerdeWaarden(voertuigen, "merk"));
+      vulFilterOpties(kleurFilter, uniekeGesorteerdeWaarden(voertuigen, "eerste_kleur"));
+      document.getElementById("resultaatFilters").classList.remove("hidden");
+    }
+
+    function verbergResultaatFilters() {
+      const merkFilter = document.getElementById("filterMerk");
+      const kleurFilter = document.getElementById("filterKleur");
+
+      merkFilter.value = "";
+      kleurFilter.value = "";
+      merkFilter.length = 1;
+      kleurFilter.length = 1;
+      document.getElementById("resultaatFilters").classList.add("hidden");
+    }
+
+    function filterVoertuigen(voertuigen, merk, kleur) {
+      return voertuigen.filter(voertuig =>
+        (!merk || voertuig.merk === merk) &&
+        (!kleur || voertuig.eerste_kleur === kleur)
+      );
+    }
+
+    function toonGefilterdeResultaten() {
+      const merk = document.getElementById("filterMerk").value;
+      const kleur = document.getElementById("filterKleur").value;
+      const voertuigen = filterVoertuigen(zoekresultaten, merk, kleur);
+      const container = document.getElementById("resultaten");
+
+      container.innerHTML = "";
+      for (const voertuig of voertuigen) {
+        container.appendChild(maakKaart(voertuig));
+      }
+
+      const status = document.getElementById("status");
+      if (!voertuigen.length) {
+        status.textContent = "❌ Geen resultaten voor deze filters.";
+      } else if (voertuigen.length === zoekresultaten.length) {
+        status.textContent = `✅ ${voertuigen.length} resultaat/resultaten`;
+      } else {
+        status.textContent = `✅ ${voertuigen.length} van ${zoekresultaten.length} resultaten`;
       }
     }
 
@@ -148,6 +246,8 @@
 
     // Search on Enter key
     document.addEventListener("keydown", e => { if (e.key === "Enter") zoek(); });
+    document.getElementById("filterMerk").addEventListener("change", toonGefilterdeResultaten);
+    document.getElementById("filterKleur").addEventListener("change", toonGefilterdeResultaten);
   </script>
 </body>
 </html>
