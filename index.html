@@ -235,6 +235,13 @@
       return Math.min(maximum, Math.max(minimum, waarde));
     }
 
+    function berekenCarrosserieScore(inrichting) {
+      const carrosserie = (inrichting ?? "").toLowerCase();
+      if (carrosserie === "coupe" || carrosserie === "cabriolet") return 150;
+      if (carrosserie === "limousine") return 25;
+      return 0;
+    }
+
     function berekenSportwagenScore(voertuig, huidigJaar) {
       const vermogenPk = voertuig.vermogenPk;
       const massaKg = getalOfNull(voertuig.massa_rijklaar);
@@ -244,7 +251,9 @@
       const heeftBeoordelingsgegevens =
         vermogenPk !== null || massaKg !== null || catalogusprijs !== null || leeftijd !== null;
 
-      if (!heeftBeoordelingsgegevens) return null;
+      if (!heeftBeoordelingsgegevens) {
+        return { totaal: null, onderdelen: [] };
+      }
 
       const pkPerTon = vermogenPk === null || massaKg === null || massaKg <= 0
         ? null
@@ -254,25 +263,34 @@
         ? begrens((vermogenPk - 200) * 0.5, 0, 100)
         : 0;
       const hoogVermogenBonus = teltVermogenMee && vermogenPk > 350
-        ? 100 + begrens((vermogenPk - 350) * 0.5, 0, 100)
+        ? begrens(25 + (vermogenPk - 350) * 0.5, 0, 100)
         : 0;
       const verhoudingScore = teltVermogenMee && pkPerTon !== null
         ? begrens((pkPerTon - 120) * 1.25, 0, 250)
         : 0;
       const prijsScore = catalogusprijs !== null && catalogusprijs > 100_000
-        ? 100 + begrens((catalogusprijs - 100_000) / 2000, 0, 100)
+        ? begrens(25 + (catalogusprijs - 100_000) / 2000, 0, 150)
         : 0;
       const klassiekerScore = leeftijd !== null
         ? begrens((leeftijd - 30) * 2, 0, 100)
         : 0;
+      const carrosserieScore = berekenCarrosserieScore(voertuig.inrichting);
+      const onderdelen = [
+        { label: "Vermogen", score: vermogenScore + hoogVermogenBonus },
+        { label: "Pk/ton", score: verhoudingScore },
+        { label: "Carrosserie", score: carrosserieScore },
+        { label: "Prijs", score: prijsScore },
+        { label: "Klassieker", score: klassiekerScore }
+      ].filter(onderdeel => onderdeel.score > 0);
+      const totaal = onderdelen.reduce((som, onderdeel) => som + onderdeel.score, 0);
 
-      return Math.round(
-        vermogenScore +
-        hoogVermogenBonus +
-        verhoudingScore +
-        prijsScore +
-        klassiekerScore
-      );
+      return {
+        totaal: Math.round(totaal),
+        onderdelen: onderdelen.map(onderdeel => ({
+          ...onderdeel,
+          score: Math.round(onderdeel.score)
+        }))
+      };
     }
 
     function groepeerBrandstofOpKenteken(brandstofGegevens) {
@@ -320,12 +338,14 @@
         vermogenPk,
         pkPerTon
       };
+      const score = brandstofRecords.length
+        ? berekenSportwagenScore(verrijktVoertuig, huidigJaar)
+        : { totaal: null, onderdelen: [] };
 
       return {
         ...verrijktVoertuig,
-        sportwagenScore: brandstofRecords.length
-          ? berekenSportwagenScore(verrijktVoertuig, huidigJaar)
-          : null
+        sportwagenScore: score.totaal,
+        scoreOnderdelen: score.onderdelen
       };
     }
 
@@ -562,6 +582,7 @@
       const kenteken = v.kenteken ?? "-";
       const formatted = formatKenteken(kenteken);
       const score = formatScore(v.sportwagenScore);
+      const scoreUitleg = formatScoreOnderdelen(v.scoreOnderdelen);
       const vermogen = v.vermogenPk === null || v.vermogenPk === undefined
         ? "Onbekend"
         : `${v.vermogenPk} pk (${formatGetal(v.vermogenKw)} kW)`;
@@ -585,13 +606,27 @@
           ${rij("⚙️ Brandstof", v.brandstof_omschrijving ?? "Onbekend")}
           ${rij("💨 CO2", v.co2_uitstoot_gecombineerd ? v.co2_uitstoot_gecombineerd + " g/km" : null)}
           ${rij("🏋️ Massa", v.massa_rijklaar ? v.massa_rijklaar + " kg" : null)}
+          ${rij("🚘 Carrosserie", formatCarrosserie(v.inrichting))}
           ${rij("🔢 Cilinders", v.aantal_cilinders)}
           ${rij("💪 Vermogen", vermogen)}
           ${rij("⚖️ Pk per ton", v.pkPerTon ? v.pkPerTon : null)}
           ${rij("💶 Catalogusprijs", formatPrijs(v.catalogusprijs))}
         </div>
+        ${scoreUitleg ? `<div class="mt-3 text-xs text-gray-400">Score: ${scoreUitleg}</div>` : ""}
         <div class="mt-3 text-right text-xs text-gray-500">↗ autoweek</div>`;
       return div;
+    }
+
+    function formatCarrosserie(inrichting) {
+      if (!inrichting || inrichting === "Niet geregistreerd") return null;
+      return inrichting.charAt(0).toUpperCase() + inrichting.slice(1);
+    }
+
+    function formatScoreOnderdelen(onderdelen) {
+      if (!onderdelen?.length) return "";
+      return onderdelen
+        .map(onderdeel => `${onderdeel.label} ${onderdeel.score}`)
+        .join(" · ");
     }
 
     function formatScore(score) {
