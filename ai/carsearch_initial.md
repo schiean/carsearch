@@ -35,6 +35,9 @@ Een simpele web-app om onderweg (op de iPhone) kentekens op te zoeken via de RDW
 - De merk- en kleurfilters beperken elkaars beschikbare opties tot combinaties die in de opgehaalde resultaten voorkomen.
 - Gefilterde resultaten client-side pagineren met 20 voertuigen per pagina.
 - Resultaten als kaarten met o.a. merk, handelsbenaming, kleur, datum eerste toelating, brandstof, CO2-uitstoot, massa, cilinders, vermogen.
+- Bij zoeken op een geheel of gedeeltelijk kenteken worden brandstof- en vermogensgegevens parallel opgehaald uit de RDW-brandstofdataset en in de browser gekoppeld op kenteken.
+- Een zichtbare sportwagenscore combineert niet-elektrisch vermogen, pk per ton, catalogusprijs en leeftijd. Resultaten kunnen op score worden gesorteerd en op een minimumscore worden gefilterd.
+- Bij zoekopdrachten zonder kenteken worden geen aanvullende brandstofgegevens opgehaald; score en vermogen worden als onbekend getoond met een toelichting boven de resultaten.
 - Kenteken-formattering: robuuste functie die splitst op overgangen tussen letters/cijfers, en groepen van 4+ tekens in tweeën splitst (want NL-kentekens hebben meerdere notatie-varianten, geen uniform formaat).
 - Klikbare kaart: opent `https://www.autoweek.nl/kentekencheck/<geformatteerd-kenteken>/` in een nieuw tabblad voor uitgebreide info.
 

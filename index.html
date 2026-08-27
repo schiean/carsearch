@@ -50,6 +50,29 @@
         <option value="">Alle kleuren</option>
       </select>
     </label>
+    <label class="text-sm text-gray-300">
+      Minimumscore
+      <select id="filterScore"
+        class="mt-1 w-full rounded-xl p-3 bg-gray-800 text-white disabled:text-gray-500">
+        <option value="0">Alle scores</option>
+        <option value="100">100+ Interessant</option>
+        <option value="250">250+ Sportief</option>
+        <option value="450">450+ Zeer bijzonder</option>
+        <option value="650">650+ Exotisch</option>
+      </select>
+    </label>
+    <label class="text-sm text-gray-300">
+      Sortering
+      <select id="sortering"
+        class="mt-1 w-full rounded-xl p-3 bg-gray-800 text-white">
+        <option id="sorteerOpScore" value="score">Hoogste score</option>
+        <option value="merk">Merk</option>
+        <option value="vermogen">Hoogste vermogen</option>
+        <option value="verhouding">Beste pk/gewicht</option>
+        <option value="prijs">Hoogste catalogusprijs</option>
+        <option value="oudste">Oudste eerst</option>
+      </select>
+    </label>
   </div>
 
   <!-- Results -->
@@ -69,11 +92,15 @@
   </div>
 
   <script>
-    const BASE = "https://opendata.rdw.nl/resource/m9d7-ebf2.json";
+    const VOERTUIGEN_BASE = "https://opendata.rdw.nl/resource/m9d7-ebf2.json";
+    const BRANDSTOFFEN_BASE = "https://opendata.rdw.nl/resource/8ys7-d773.json";
     const MAX_ZOEKRESULTATEN = 500;
+    const MAX_BRANDSTOFRESULTATEN = 1000;
     const RESULTATEN_PER_PAGINA = 20;
     let zoekresultaten = [];
     let huidigePagina = 1;
+    let scoreOndersteund = false;
+    let brandstofResultaatAfgekapt = false;
 
     async function zoek() {
       const kenteken = document.getElementById("inpKenteken").value.replace(/-/g, "").toUpperCase().trim();
@@ -85,6 +112,8 @@
       container.innerHTML = "";
       zoekresultaten = [];
       huidigePagina = 1;
+      scoreOndersteund = Boolean(kenteken);
+      brandstofResultaatAfgekapt = false;
       verbergResultaatFilters();
       verbergPaginering();
       setStatus("⏳ Zoeken...");
@@ -112,33 +141,204 @@
       const params = new URLSearchParams({
         $where: filters.join(" AND "),
         $limit: MAX_ZOEKRESULTATEN,
-        $order: "merk ASC"
+        $order: kenteken ? "kenteken ASC" : "merk ASC"
       });
 
       try {
-        const resp = await fetch(`${BASE}?${params}`);
-        if (!resp.ok) {
-          throw new Error(`RDW gaf status ${resp.status}`);
-        }
-
-        const data = await resp.json();
-        if (!Array.isArray(data)) {
-          throw new Error("RDW gaf een onverwacht antwoord");
-        }
+        const voertuigAanvraag = haalRdwGegevens(VOERTUIGEN_BASE, params);
+        const brandstofAanvraag = kenteken
+          ? haalBrandstofGegevens(kenteken)
+          : Promise.resolve([]);
+        const [data, brandstofGegevens] = await Promise.all([voertuigAanvraag, brandstofAanvraag]);
 
         if (!data.length) {
           setStatus("❌ Geen resultaten gevonden.");
           return;
         }
 
-        zoekresultaten = data;
+        brandstofResultaatAfgekapt = brandstofGegevens.length === MAX_BRANDSTOFRESULTATEN;
+        zoekresultaten = scoreOndersteund
+          ? verrijkVoertuigen(data, brandstofGegevens)
+          : data.map(voertuig => ({ ...voertuig, sportwagenScore: null }));
+        stelScoreBedieningIn();
         if (data.length > 1) {
-          toonResultaatFilters(data);
+          toonResultaatFilters(zoekresultaten);
         }
         toonGefilterdeResultaten();
       } catch (e) {
         setStatus("🔴 Fout bij ophalen: " + e.message);
       }
+    }
+
+    async function haalRdwGegevens(base, params) {
+      const antwoord = await fetch(`${base}?${params}`);
+      if (!antwoord.ok) {
+        throw new Error(`RDW gaf status ${antwoord.status}`);
+      }
+
+      const gegevens = await antwoord.json();
+      if (!Array.isArray(gegevens)) {
+        throw new Error("RDW gaf een onverwacht antwoord");
+      }
+      return gegevens;
+    }
+
+    function maakKentekenFilter(kenteken) {
+      return kenteken.length >= 6
+        ? `kenteken='${kenteken}'`
+        : `starts_with(kenteken,'${kenteken}')`;
+    }
+
+    function haalBrandstofGegevens(kenteken) {
+      const params = new URLSearchParams({
+        $select: [
+          "kenteken",
+          "brandstof_omschrijving",
+          "nettomaximumvermogen",
+          "netto_max_vermogen_elektrisch",
+          "nominaal_continu_maximumvermogen",
+          "co2_uitstoot_gecombineerd"
+        ].join(","),
+        $where: maakKentekenFilter(kenteken),
+        $limit: MAX_BRANDSTOFRESULTATEN,
+        $order: "kenteken ASC"
+      });
+      return haalRdwGegevens(BRANDSTOFFEN_BASE, params);
+    }
+
+    function getalOfNull(waarde) {
+      if (waarde === null || waarde === undefined || waarde === "") return null;
+      const getal = Number(waarde);
+      return Number.isFinite(getal) ? getal : null;
+    }
+
+    function maximumVeldwaarde(records, velden) {
+      let maximum = null;
+      for (const record of records) {
+        for (const veld of velden) {
+          const waarde = getalOfNull(record[veld]);
+          if (waarde !== null && (maximum === null || waarde > maximum)) {
+            maximum = waarde;
+          }
+        }
+      }
+      return maximum;
+    }
+
+    function jaarOfNull(datum) {
+      if (!datum || String(datum).length < 4) return null;
+      const jaar = Number(String(datum).slice(0, 4));
+      return Number.isInteger(jaar) ? jaar : null;
+    }
+
+    function begrens(waarde, minimum, maximum) {
+      return Math.min(maximum, Math.max(minimum, waarde));
+    }
+
+    function berekenSportwagenScore(voertuig, huidigJaar) {
+      const vermogenPk = voertuig.vermogenPk;
+      const massaKg = getalOfNull(voertuig.massa_rijklaar);
+      const catalogusprijs = getalOfNull(voertuig.catalogusprijs);
+      const toelatingsjaar = jaarOfNull(voertuig.datum_eerste_toelating);
+      const leeftijd = toelatingsjaar === null ? null : Math.max(0, huidigJaar - toelatingsjaar);
+      const heeftBeoordelingsgegevens =
+        vermogenPk !== null || massaKg !== null || catalogusprijs !== null || leeftijd !== null;
+
+      if (!heeftBeoordelingsgegevens) return null;
+
+      const pkPerTon = vermogenPk === null || massaKg === null || massaKg <= 0
+        ? null
+        : vermogenPk / (massaKg / 1000);
+      const teltVermogenMee = !voertuig.isVolledigElektrisch && vermogenPk !== null;
+      const vermogenScore = teltVermogenMee
+        ? begrens((vermogenPk - 200) * 0.5, 0, 100)
+        : 0;
+      const hoogVermogenBonus = teltVermogenMee && vermogenPk > 350
+        ? 100 + begrens((vermogenPk - 350) * 0.5, 0, 100)
+        : 0;
+      const verhoudingScore = teltVermogenMee && pkPerTon !== null
+        ? begrens((pkPerTon - 120) * 1.25, 0, 250)
+        : 0;
+      const prijsScore = catalogusprijs !== null && catalogusprijs > 100_000
+        ? 100 + begrens((catalogusprijs - 100_000) / 2000, 0, 100)
+        : 0;
+      const klassiekerScore = leeftijd !== null
+        ? begrens((leeftijd - 30) * 2, 0, 100)
+        : 0;
+
+      return Math.round(
+        vermogenScore +
+        hoogVermogenBonus +
+        verhoudingScore +
+        prijsScore +
+        klassiekerScore
+      );
+    }
+
+    function groepeerBrandstofOpKenteken(brandstofGegevens) {
+      const perKenteken = new Map();
+      for (const record of brandstofGegevens) {
+        const records = perKenteken.get(record.kenteken) ?? [];
+        records.push(record);
+        perKenteken.set(record.kenteken, records);
+      }
+      return perKenteken;
+    }
+
+    function verrijkVoertuig(voertuig, brandstofRecords, huidigJaar) {
+      const brandstoffen = [...new Set(
+        brandstofRecords.map(record => record.brandstof_omschrijving).filter(Boolean)
+      )];
+      const isVolledigElektrisch =
+        brandstoffen.length > 0 &&
+        brandstoffen.every(brandstof => brandstof === "Elektriciteit");
+      const verbrandingsvermogenKw = maximumVeldwaarde(
+        brandstofRecords,
+        ["nettomaximumvermogen"]
+      );
+      const elektrischVermogenKw = maximumVeldwaarde(
+        brandstofRecords,
+        ["netto_max_vermogen_elektrisch", "nominaal_continu_maximumvermogen"]
+      );
+      const vermogenKw = isVolledigElektrisch
+        ? elektrischVermogenKw
+        : verbrandingsvermogenKw;
+      const vermogenPk = vermogenKw === null ? null : Math.round(vermogenKw * 1.35962);
+      const massaKg = getalOfNull(voertuig.massa_rijklaar);
+      const pkPerTon = vermogenPk === null || massaKg === null || massaKg <= 0
+        ? null
+        : Math.round(vermogenPk / (massaKg / 1000));
+      const verrijktVoertuig = {
+        ...voertuig,
+        brandstof_omschrijving: brandstoffen.join(" + ") || null,
+        co2_uitstoot_gecombineerd: maximumVeldwaarde(
+          brandstofRecords,
+          ["co2_uitstoot_gecombineerd"]
+        ),
+        isVolledigElektrisch,
+        vermogenKw,
+        vermogenPk,
+        pkPerTon
+      };
+
+      return {
+        ...verrijktVoertuig,
+        sportwagenScore: brandstofRecords.length
+          ? berekenSportwagenScore(verrijktVoertuig, huidigJaar)
+          : null
+      };
+    }
+
+    function verrijkVoertuigen(voertuigen, brandstofGegevens) {
+      const brandstofPerKenteken = groepeerBrandstofOpKenteken(brandstofGegevens);
+      const huidigJaar = new Date().getFullYear();
+      return voertuigen.map(voertuig =>
+        verrijkVoertuig(
+          voertuig,
+          brandstofPerKenteken.get(voertuig.kenteken) ?? [],
+          huidigJaar
+        )
+      );
     }
 
     function uniekeGesorteerdeWaarden(voertuigen, veld) {
@@ -174,14 +374,68 @@
       kleurFilter.value = "";
       merkFilter.length = 1;
       kleurFilter.length = 1;
+      document.getElementById("filterScore").value = "0";
+      document.getElementById("sortering").value = "score";
       document.getElementById("resultaatFilters").classList.add("hidden");
     }
 
-    function filterVoertuigen(voertuigen, merk, kleur) {
+    function stelScoreBedieningIn() {
+      const scoreFilter = document.getElementById("filterScore");
+      const scoreSortering = document.getElementById("sorteerOpScore");
+      const sortering = document.getElementById("sortering");
+
+      scoreFilter.disabled = !scoreOndersteund;
+      scoreSortering.disabled = !scoreOndersteund;
+      if (!scoreOndersteund) {
+        scoreFilter.value = "0";
+        sortering.value = "merk";
+      } else {
+        sortering.value = "score";
+      }
+    }
+
+    function filterVoertuigen(voertuigen, merk, kleur, minimumScore = 0) {
       return voertuigen.filter(voertuig =>
         (!merk || voertuig.merk === merk) &&
-        (!kleur || voertuig.eerste_kleur === kleur)
+        (!kleur || voertuig.eerste_kleur === kleur) &&
+        (!minimumScore ||
+          (voertuig.sportwagenScore !== null && voertuig.sportwagenScore >= minimumScore))
       );
+    }
+
+    function vergelijkTekst(a, b) {
+      return (a ?? "").localeCompare(b ?? "", "nl");
+    }
+
+    function vergelijkGetalAflopend(a, b) {
+      const eerste = getalOfNull(a);
+      const tweede = getalOfNull(b);
+      if (eerste === null && tweede === null) return 0;
+      if (eerste === null) return 1;
+      if (tweede === null) return -1;
+      return tweede - eerste;
+    }
+
+    function sorteerVoertuigen(voertuigen, sortering) {
+      return [...voertuigen].sort((a, b) => {
+        let verschil = 0;
+        if (sortering === "score") {
+          verschil = vergelijkGetalAflopend(a.sportwagenScore, b.sportwagenScore);
+        } else if (sortering === "vermogen") {
+          verschil = vergelijkGetalAflopend(a.vermogenPk, b.vermogenPk);
+        } else if (sortering === "verhouding") {
+          verschil = vergelijkGetalAflopend(a.pkPerTon, b.pkPerTon);
+        } else if (sortering === "prijs") {
+          verschil = vergelijkGetalAflopend(a.catalogusprijs, b.catalogusprijs);
+        } else if (sortering === "oudste") {
+          verschil = vergelijkTekst(a.datum_eerste_toelating, b.datum_eerste_toelating);
+        }
+
+        return verschil ||
+          vergelijkTekst(a.merk, b.merk) ||
+          vergelijkTekst(a.handelsbenaming, b.handelsbenaming) ||
+          vergelijkTekst(a.kenteken, b.kenteken);
+      });
     }
 
     function verversResultaatFilterOpties() {
@@ -189,8 +443,9 @@
       const kleurFilter = document.getElementById("filterKleur");
       const gekozenMerk = merkFilter.value;
       const gekozenKleur = kleurFilter.value;
-      const voertuigenMetKleur = filterVoertuigen(zoekresultaten, "", gekozenKleur);
-      const voertuigenVanMerk = filterVoertuigen(zoekresultaten, gekozenMerk, "");
+      const minimumScore = Number(document.getElementById("filterScore").value);
+      const voertuigenMetKleur = filterVoertuigen(zoekresultaten, "", gekozenKleur, minimumScore);
+      const voertuigenVanMerk = filterVoertuigen(zoekresultaten, gekozenMerk, "", minimumScore);
 
       vervangFilterOpties(
         merkFilter,
@@ -235,7 +490,12 @@
     function toonGefilterdeResultaten() {
       const merk = document.getElementById("filterMerk").value;
       const kleur = document.getElementById("filterKleur").value;
-      const voertuigen = filterVoertuigen(zoekresultaten, merk, kleur);
+      const minimumScore = Number(document.getElementById("filterScore").value);
+      const sortering = document.getElementById("sortering").value;
+      const voertuigen = sorteerVoertuigen(
+        filterVoertuigen(zoekresultaten, merk, kleur, minimumScore),
+        sortering
+      );
       const paginas = aantalPaginas(voertuigen.length);
       huidigePagina = Math.min(huidigePagina, Math.max(paginas, 1));
       const container = document.getElementById("resultaten");
@@ -250,12 +510,22 @@
       if (!voertuigen.length) {
         status.textContent = "❌ Geen resultaten voor deze filters.";
       } else if (zoekresultaten.length === MAX_ZOEKRESULTATEN) {
-        status.textContent = `✅ ${voertuigen.length} van maximaal ${MAX_ZOEKRESULTATEN} opgehaalde resultaten; verfijn de zoekopdracht voor een vollediger resultaat.`;
+        status.textContent = `✅ ${voertuigen.length} van maximaal ${MAX_ZOEKRESULTATEN} opgehaalde resultaten; verfijn de zoekopdracht voor een vollediger resultaat.${scoreMelding()}`;
       } else if (voertuigen.length === zoekresultaten.length) {
-        status.textContent = `✅ ${voertuigen.length} resultaat/resultaten`;
+        status.textContent = `✅ ${voertuigen.length} resultaat/resultaten${scoreMelding()}`;
       } else {
-        status.textContent = `✅ ${voertuigen.length} van ${zoekresultaten.length} resultaten`;
+        status.textContent = `✅ ${voertuigen.length} van ${zoekresultaten.length} resultaten${scoreMelding()}`;
       }
+    }
+
+    function scoreMelding() {
+      if (!scoreOndersteund) {
+        return " Score en vermogensgegevens zijn alleen beschikbaar bij zoeken op een geheel of gedeeltelijk kenteken.";
+      }
+      if (brandstofResultaatAfgekapt) {
+        return ` De eerste ${MAX_BRANDSTOFRESULTATEN} brandstofregels zijn gebruikt; verfijn het kenteken voor completere scores.`;
+      }
+      return "";
     }
 
     function wijzigPagina(stap) {
@@ -291,6 +561,10 @@
 
       const kenteken = v.kenteken ?? "-";
       const formatted = formatKenteken(kenteken);
+      const score = formatScore(v.sportwagenScore);
+      const vermogen = v.vermogenPk === null || v.vermogenPk === undefined
+        ? "Onbekend"
+        : `${v.vermogenPk} pk (${formatGetal(v.vermogenKw)} kW)`;
 
       // Make the card a clickable link to Autoweek kentekencheck
       div.style.cursor = "pointer";
@@ -299,19 +573,50 @@
       div.innerHTML = `
         <div class="flex justify-between items-start mb-2">
           <span class="text-yellow-400 font-bold text-xl tracking-widest">${formatted}</span>
-          <span class="text-xs text-gray-500">↗ autoweek</span>
+          <div class="text-right">
+            <div class="text-yellow-400 font-bold text-lg">🏆 ${score.waarde}</div>
+            <div class="text-xs text-gray-400">${score.label}</div>
+          </div>
         </div>
         <div class="text-white text-lg font-semibold">${v.merk ?? ""} ${v.handelsbenaming ?? ""}</div>
         <div class="mt-2 grid grid-cols-2 gap-1 text-sm text-gray-300">
           ${rij("🎨 Kleur", v.eerste_kleur)}
           ${rij("📅 Toelating", formatDatum(v.datum_eerste_toelating))}
-          ${rij("⚙️ Brandstof", v.brandstof_omschrijving)}
+          ${rij("⚙️ Brandstof", v.brandstof_omschrijving ?? "Onbekend")}
           ${rij("💨 CO2", v.co2_uitstoot_gecombineerd ? v.co2_uitstoot_gecombineerd + " g/km" : null)}
           ${rij("🏋️ Massa", v.massa_rijklaar ? v.massa_rijklaar + " kg" : null)}
           ${rij("🔢 Cilinders", v.aantal_cilinders)}
-          ${rij("💪 Vermogen", v.nettomaximumvermogen ? v.nettomaximumvermogen + " kW" : null)}
-        </div>`;
+          ${rij("💪 Vermogen", vermogen)}
+          ${rij("⚖️ Pk per ton", v.pkPerTon ? v.pkPerTon : null)}
+          ${rij("💶 Catalogusprijs", formatPrijs(v.catalogusprijs))}
+        </div>
+        <div class="mt-3 text-right text-xs text-gray-500">↗ autoweek</div>`;
       return div;
+    }
+
+    function formatScore(score) {
+      if (score === null || score === undefined) {
+        return { waarde: "Onbekend", label: "Geen vermogensgegevens" };
+      }
+      if (score >= 650) return { waarde: score, label: "Exotisch" };
+      if (score >= 450) return { waarde: score, label: "Zeer bijzonder" };
+      if (score >= 250) return { waarde: score, label: "Sportief" };
+      if (score >= 100) return { waarde: score, label: "Interessant" };
+      return { waarde: score, label: "Normaal" };
+    }
+
+    function formatGetal(waarde) {
+      return new Intl.NumberFormat("nl-NL", { maximumFractionDigits: 1 }).format(waarde);
+    }
+
+    function formatPrijs(waarde) {
+      const prijs = getalOfNull(waarde);
+      if (prijs === null) return null;
+      return new Intl.NumberFormat("nl-NL", {
+        style: "currency",
+        currency: "EUR",
+        maximumFractionDigits: 0
+      }).format(prijs);
     }
 
     function rij(label, waarde) {
@@ -328,6 +633,8 @@
     document.addEventListener("keydown", e => { if (e.key === "Enter") zoek(); });
     document.getElementById("filterMerk").addEventListener("change", pasResultaatFiltersToe);
     document.getElementById("filterKleur").addEventListener("change", pasResultaatFiltersToe);
+    document.getElementById("filterScore").addEventListener("change", pasResultaatFiltersToe);
+    document.getElementById("sortering").addEventListener("change", pasResultaatFiltersToe);
     document.getElementById("vorigePagina").addEventListener("click", () => wijzigPagina(-1));
     document.getElementById("volgendePagina").addEventListener("click", () => wijzigPagina(1));
   </script>
