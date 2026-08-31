@@ -51,7 +51,7 @@
       </select>
     </label>
     <label class="text-sm text-gray-300">
-      Minimumscore
+      Bijzonderheidsscore
       <select id="filterScore"
         class="mt-1 w-full rounded-xl p-3 bg-gray-800 text-white disabled:text-gray-500">
         <option value="0">Alle scores</option>
@@ -196,7 +196,7 @@
         brandstofResultaatAfgekapt = brandstofGegevens.length === MAX_BRANDSTOFRESULTATEN;
         zoekresultaten = scoreOndersteund
           ? verrijkVoertuigen(data, brandstofGegevens)
-          : data.map(voertuig => ({ ...voertuig, sportwagenScore: null }));
+          : data.map(voertuig => ({ ...voertuig, bijzonderheidsscore: null }));
         stelScoreBedieningIn();
         if (data.length > 1) {
           toonResultaatFilters(zoekresultaten);
@@ -279,7 +279,16 @@
       return 0;
     }
 
-    function berekenSportwagenScore(voertuig, huidigJaar) {
+    function berekenTijdsfactor(leeftijd) {
+      if (leeftijd === null) return 1;
+      return begrens(2 ** (leeftijd / 30), 1, 2.5);
+    }
+
+    function formatTijdsfactor(tijdsfactor) {
+      return tijdsfactor.toFixed(2).replace(".", ",");
+    }
+
+    function berekenBijzonderheidsscore(voertuig, huidigJaar) {
       const vermogenPk = voertuig.vermogenPk;
       const massaKg = getalOfNull(voertuig.massa_rijklaar);
       const catalogusprijs = getalOfNull(voertuig.catalogusprijs);
@@ -295,6 +304,10 @@
       const pkPerTon = vermogenPk === null || massaKg === null || massaKg <= 0
         ? null
         : vermogenPk / (massaKg / 1000);
+      const tijdsfactor = berekenTijdsfactor(leeftijd);
+      const tijdgecorrigeerdePkPerTon = pkPerTon === null
+        ? null
+        : pkPerTon * tijdsfactor;
       const teltVermogenMee = !voertuig.isVolledigElektrisch && vermogenPk !== null;
       const vermogenScore = teltVermogenMee
         ? begrens((vermogenPk - 200) * 0.5, 0, 100)
@@ -302,8 +315,8 @@
       const hoogVermogenBonus = teltVermogenMee && vermogenPk > 350
         ? begrens(25 + (vermogenPk - 350) * 0.5, 0, 100)
         : 0;
-      const verhoudingScore = teltVermogenMee && pkPerTon !== null
-        ? begrens((pkPerTon - 120) * 1.25, 0, 250)
+      const verhoudingScore = teltVermogenMee && tijdgecorrigeerdePkPerTon !== null
+        ? begrens((tijdgecorrigeerdePkPerTon - 120) * 1.25, 0, 250)
         : 0;
       const prijsScore = catalogusprijs !== null && catalogusprijs > 100_000
         ? begrens(25 + (catalogusprijs - 100_000) / 2000, 0, 150)
@@ -312,9 +325,12 @@
         ? begrens((leeftijd - 30) * 2, 0, 100)
         : 0;
       const carrosserieScore = berekenCarrosserieScore(voertuig.inrichting);
+      const verhoudingLabel = tijdsfactor > 1
+        ? `Pk/ton (tijd x${formatTijdsfactor(tijdsfactor)})`
+        : "Pk/ton";
       const onderdelen = [
         { label: "Vermogen", score: vermogenScore + hoogVermogenBonus },
-        { label: "Pk/ton", score: verhoudingScore },
+        { label: verhoudingLabel, score: verhoudingScore },
         { label: "Carrosserie", score: carrosserieScore },
         { label: "Prijs", score: prijsScore },
         { label: "Klassieker", score: klassiekerScore }
@@ -375,14 +391,14 @@
         vermogenPk,
         pkPerTon
       };
-      const score = brandstofRecords.length
-        ? berekenSportwagenScore(verrijktVoertuig, huidigJaar)
+      const bijzonderheidsscore = brandstofRecords.length
+        ? berekenBijzonderheidsscore(verrijktVoertuig, huidigJaar)
         : { totaal: null, onderdelen: [] };
 
       return {
         ...verrijktVoertuig,
-        sportwagenScore: score.totaal,
-        scoreOnderdelen: score.onderdelen
+        bijzonderheidsscore: bijzonderheidsscore.totaal,
+        scoreOnderdelen: bijzonderheidsscore.onderdelen
       };
     }
 
@@ -456,7 +472,8 @@
         (!merk || voertuig.merk === merk) &&
         (!kleur || voertuig.eerste_kleur === kleur) &&
         (!minimumScore ||
-          (voertuig.sportwagenScore !== null && voertuig.sportwagenScore >= minimumScore))
+          (voertuig.bijzonderheidsscore !== null &&
+            voertuig.bijzonderheidsscore >= minimumScore))
       );
     }
 
@@ -477,7 +494,7 @@
       return [...voertuigen].sort((a, b) => {
         let verschil = 0;
         if (sortering === "score") {
-          verschil = vergelijkGetalAflopend(a.sportwagenScore, b.sportwagenScore);
+          verschil = vergelijkGetalAflopend(a.bijzonderheidsscore, b.bijzonderheidsscore);
         } else if (sortering === "vermogen") {
           verschil = vergelijkGetalAflopend(a.vermogenPk, b.vermogenPk);
         } else if (sortering === "verhouding") {
@@ -580,7 +597,7 @@
         return " Score en vermogensgegevens zijn alleen beschikbaar bij zoeken op een geheel of gedeeltelijk kenteken.";
       }
       if (brandstofResultaatAfgekapt) {
-        return ` De eerste ${MAX_BRANDSTOFRESULTATEN} brandstofregels zijn gebruikt; verfijn het kenteken voor completere scores.`;
+        return ` De eerste ${MAX_BRANDSTOFRESULTATEN} brandstofregels zijn gebruikt; verfijn het kenteken voor completere bijzonderheidsscores.`;
       }
       return "";
     }
@@ -618,7 +635,7 @@
 
       const kenteken = v.kenteken ?? "-";
       const formatted = formatKenteken(kenteken);
-      const score = formatScore(v.sportwagenScore);
+      const score = formatScore(v.bijzonderheidsscore);
       const scoreUitleg = formatScoreOnderdelen(v.scoreOnderdelen);
       const vermogen = v.vermogenPk === null || v.vermogenPk === undefined
         ? "Onbekend"
@@ -649,7 +666,7 @@
           ${rij("⚖️ Pk per ton", v.pkPerTon ? v.pkPerTon : null)}
           ${rij("💶 Catalogusprijs", formatPrijs(v.catalogusprijs))}
         </div>
-        ${scoreUitleg ? `<div class="mt-3 text-xs text-gray-400">Score: ${scoreUitleg}</div>` : ""}
+        ${scoreUitleg ? `<div class="mt-3 text-xs text-gray-400">Bijzonderheidsscore: ${scoreUitleg}</div>` : ""}
         <div class="mt-3 text-right text-xs text-gray-500">↗ autoweek</div>`;
       return div;
     }
