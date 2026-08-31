@@ -31,6 +31,7 @@ Een simpele web-app om onderweg (op de iPhone) kentekens op te zoeken via de RDW
 ## Functionaliteit in de app
 
 - Zoekvelden: Kenteken (volledig of gedeeltelijk), Merk, "Bevat" (cijfers/letters).
+- Een uitgevoerde zoekopdracht wordt vastgelegd in leesbare URL-parameters (`kenteken`, `merk` en `bevat`). Bij het openen van zo'n gedeelde URL worden de velden hersteld en wordt de zoekopdracht automatisch uitgevoerd.
 - Maximaal 500 resultaten ophalen en lokaal filteren op merk en/of eerste kleur, zonder een nieuwe API-aanvraag.
 - De merk- en kleurfilters beperken elkaars beschikbare opties tot combinaties die in de opgehaalde resultaten voorkomen.
 - Gefilterde resultaten client-side pagineren met 20 voertuigen per pagina.

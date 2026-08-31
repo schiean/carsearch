@@ -102,10 +102,43 @@
     let scoreOndersteund = false;
     let brandstofResultaatAfgekapt = false;
 
-    async function zoek() {
-      const kenteken = document.getElementById("inpKenteken").value.replace(/-/g, "").toUpperCase().trim();
-      const merk     = document.getElementById("inpMerk").value.trim().toUpperCase();
-      const letters  = document.getElementById("inpLetters").value.replace(/-/g, "").toUpperCase().trim();
+    function leesZoekcriteriaUitFormulier() {
+      return {
+        kenteken: document.getElementById("inpKenteken").value.replace(/-/g, "").toUpperCase().trim(),
+        merk: document.getElementById("inpMerk").value.trim().toUpperCase(),
+        bevat: document.getElementById("inpLetters").value.replace(/-/g, "").toUpperCase().trim()
+      };
+    }
+
+    function werkZoekUrlBij(zoekcriteria) {
+      const url = new URL(window.location.href);
+      const params = new URLSearchParams();
+
+      for (const [naam, waarde] of Object.entries(zoekcriteria)) {
+        if (waarde) params.set(naam, waarde);
+      }
+
+      url.search = params.toString();
+      window.history.replaceState(null, "", url);
+    }
+
+    function herstelZoekcriteriaUitUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const zoekcriteria = {
+        kenteken: params.get("kenteken") ?? "",
+        merk: params.get("merk") ?? "",
+        bevat: params.get("bevat") ?? ""
+      };
+
+      document.getElementById("inpKenteken").value = zoekcriteria.kenteken;
+      document.getElementById("inpMerk").value = zoekcriteria.merk;
+      document.getElementById("inpLetters").value = zoekcriteria.bevat;
+      return zoekcriteria;
+    }
+
+    async function zoek(urlBijwerken = true) {
+      const zoekcriteria = leesZoekcriteriaUitFormulier();
+      const { kenteken, merk, bevat } = zoekcriteria;
 
       const setStatus = t => document.getElementById("status").textContent = t;
       const container = document.getElementById("resultaten");
@@ -131,11 +164,15 @@
       }
 
       if (merk)    filters.push(`upper(merk)='${merk}'`);
-      if (letters) filters.push(`contains(kenteken,'${letters}')`);
+      if (bevat) filters.push(`contains(kenteken,'${bevat}')`);
 
-      if (filters.length <= 1 && !merk && !letters && !kenteken) {
+      if (filters.length <= 1 && !merk && !bevat && !kenteken) {
         setStatus("⚠️ Vul minimaal één zoekveld in.");
         return;
+      }
+
+      if (urlBijwerken) {
+        werkZoekUrlBij(zoekcriteria);
       }
 
       const params = new URLSearchParams({
@@ -672,6 +709,11 @@
     document.getElementById("sortering").addEventListener("change", pasResultaatFiltersToe);
     document.getElementById("vorigePagina").addEventListener("click", () => wijzigPagina(-1));
     document.getElementById("volgendePagina").addEventListener("click", () => wijzigPagina(1));
+
+    const zoekcriteriaUitUrl = herstelZoekcriteriaUitUrl();
+    if (Object.values(zoekcriteriaUitUrl).some(Boolean)) {
+      zoek(false);
+    }
   </script>
 </body>
 </html>
