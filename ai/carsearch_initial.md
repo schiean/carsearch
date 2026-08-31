@@ -42,6 +42,7 @@ Een simpele web-app om onderweg (op de iPhone) kentekens op te zoeken via de RDW
 - Bij zoekopdrachten zonder kenteken worden geen aanvullende brandstofgegevens opgehaald; score en vermogen worden als onbekend getoond met een toelichting boven de resultaten.
 - Kenteken-formattering: robuuste functie die splitst op overgangen tussen letters/cijfers, en groepen van 4+ tekens in tweeën splitst (want NL-kentekens hebben meerdere notatie-varianten, geen uniform formaat).
 - Klikbare kaart: opent `https://www.autoweek.nl/kentekencheck/<geformatteerd-kenteken>/` in een nieuw tabblad voor uitgebreide info.
+- Elke kaart toont aparte links naar AutoWeek en een Google-zoekopdracht op kenteken, merk en handelsbenaming.
 
 ## Openstaande/toekomstige verbeteringen
 

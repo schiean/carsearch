@@ -629,12 +629,22 @@
       return segments.join('-');
     }
 
+    function maakGoogleZoekUrl(voertuig, geformatteerdKenteken) {
+      const zoektermen = [
+        geformatteerdKenteken,
+        voertuig.merk,
+        voertuig.handelsbenaming
+      ].filter(Boolean);
+      return `https://www.google.com/search?q=${encodeURIComponent(zoektermen.join(" "))}`;
+    }
+
     function maakKaart(v) {
       const div = document.createElement("div");
       div.className = "bg-gray-800 rounded-2xl p-4 shadow-lg";
 
       const kenteken = v.kenteken ?? "-";
-      const formatted = formatKenteken(kenteken);
+      const autoweekUrl = `https://www.autoweek.nl/kentekencheck/${formatted}/`;
+      const googleUrl = maakGoogleZoekUrl(v, kenteken);
       const score = formatScore(v.bijzonderheidsscore);
       const scoreUitleg = formatScoreOnderdelen(v.scoreOnderdelen);
       const vermogen = v.vermogenPk === null || v.vermogenPk === undefined
@@ -643,7 +653,7 @@
 
       // Make the card a clickable link to Autoweek kentekencheck
       div.style.cursor = "pointer";
-      div.onclick = () => window.open(`https://www.autoweek.nl/kentekencheck/${formatted}/`, "_blank");
+      div.onclick = () => window.open(autoweekUrl, "_blank");
 
       div.innerHTML = `
         <div class="flex justify-between items-start mb-2">
@@ -667,7 +677,12 @@
           ${rij("💶 Catalogusprijs", formatPrijs(v.catalogusprijs))}
         </div>
         ${scoreUitleg ? `<div class="mt-3 text-xs text-gray-400">Bijzonderheidsscore: ${scoreUitleg}</div>` : ""}
-        <div class="mt-3 text-right text-xs text-gray-500">↗ autoweek</div>`;
+        <div class="mt-3 flex justify-end gap-4 text-xs">
+          <a href="${autoweekUrl}" target="_blank" rel="noopener noreferrer"
+            onclick="event.stopPropagation()" class="text-gray-400 hover:text-yellow-400">↗ AutoWeek</a>
+          <a href="${googleUrl}" target="_blank" rel="noopener noreferrer"
+            onclick="event.stopPropagation()" class="text-gray-400 hover:text-yellow-400">↗ Google</a>
+        </div>`;
       return div;
     }
 
