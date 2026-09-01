@@ -97,10 +97,12 @@
     const MAX_ZOEKRESULTATEN = 500;
     const MAX_BRANDSTOFRESULTATEN = 1000;
     const RESULTATEN_PER_PAGINA = 20;
+    const EERDER_GEZIEN_BONUS = 200;
     let zoekresultaten = [];
     let huidigePagina = 1;
     let scoreOndersteund = false;
     let brandstofResultaatAfgekapt = false;
+    let kentekenHistorieAanvraag;
 
     function leesZoekcriteriaUitFormulier() {
       return {
@@ -186,7 +188,11 @@
         const brandstofAanvraag = kenteken
           ? haalBrandstofGegevens(kenteken)
           : Promise.resolve([]);
-        const [data, brandstofGegevens] = await Promise.all([voertuigAanvraag, brandstofAanvraag]);
+        const [data, brandstofGegevens, kentekenHistorie] = await Promise.all([
+          voertuigAanvraag,
+          brandstofAanvraag,
+          haalKentekenHistorie()
+        ]);
 
         if (!data.length) {
           setStatus("❌ Geen resultaten gevonden.");
@@ -195,8 +201,12 @@
 
         brandstofResultaatAfgekapt = brandstofGegevens.length === MAX_BRANDSTOFRESULTATEN;
         zoekresultaten = scoreOndersteund
-          ? verrijkVoertuigen(data, brandstofGegevens)
-          : data.map(voertuig => ({ ...voertuig, bijzonderheidsscore: null }));
+          ? verrijkVoertuigen(data, brandstofGegevens, kentekenHistorie)
+          : data.map(voertuig => ({
+            ...voertuig,
+            gezienOp: kentekenHistorie.get(voertuig.kenteken) ?? [],
+            bijzonderheidsscore: null
+          }));
         stelScoreBedieningIn();
         if (data.length > 1) {
           toonResultaatFilters(zoekresultaten);
@@ -218,6 +228,80 @@
         throw new Error("RDW gaf een onverwacht antwoord");
       }
       return gegevens;
+    }
+
+    function parseCsvRegel(regel) {
+      const velden = [];
+      let waarde = "";
+      let tussenAanhalingstekens = false;
+
+      for (let positie = 0; positie < regel.length; positie++) {
+        const teken = regel[positie];
+        if (teken === '"' && tussenAanhalingstekens && regel[positie + 1] === '"') {
+          waarde += '"';
+          positie++;
+        } else if (teken === '"') {
+          tussenAanhalingstekens = !tussenAanhalingstekens;
+        } else if (teken === "," && !tussenAanhalingstekens) {
+          velden.push(waarde);
+          waarde = "";
+        } else {
+          waarde += teken;
+        }
+      }
+      velden.push(waarde);
+      return velden;
+    }
+
+    function haalKentekenUitZoekopdracht(zoekopdracht) {
+      const delen = zoekopdracht.toUpperCase().match(/[A-Z0-9]+/g) ?? [];
+      let kandidaat = "";
+
+      for (const deel of delen) {
+        kandidaat += deel;
+        if (kandidaat.length === 6) {
+          return /[A-Z]/.test(kandidaat) && /\d/.test(kandidaat)
+            ? kandidaat
+            : null;
+        }
+        if (kandidaat.length > 6) return null;
+      }
+      return null;
+    }
+
+    function parseKentekenHistorie(csv) {
+      const historie = new Map();
+      const regels = csv.replace(/^\uFEFF/, "").split(/\r?\n/);
+
+      for (const regel of regels.slice(1)) {
+        if (!regel.trim()) continue;
+        const [zoekopdracht, tijdstip] = parseCsvRegel(regel);
+        const kenteken = haalKentekenUitZoekopdracht(zoekopdracht ?? "");
+        const gezienOp = new Date(tijdstip);
+        if (!kenteken || Number.isNaN(gezienOp.getTime())) continue;
+
+        const datums = historie.get(kenteken) ?? [];
+        datums.push(gezienOp);
+        historie.set(kenteken, datums);
+      }
+
+      for (const [kenteken, datums] of historie) {
+        datums.sort((eerste, tweede) => tweede.getTime() - eerste.getTime());
+        historie.set(kenteken, datums);
+      }
+      return historie;
+    }
+
+    function haalKentekenHistorie() {
+      kentekenHistorieAanvraag ??= fetch("kenteken.csv")
+        .then(antwoord => {
+          if (!antwoord.ok) {
+            throw new Error(`kentekenhistorie gaf status ${antwoord.status}`);
+          }
+          return antwoord.text();
+        })
+        .then(parseKentekenHistorie);
+      return kentekenHistorieAanvraag;
     }
 
     function maakKentekenFilter(kenteken) {
@@ -325,6 +409,7 @@
         ? begrens((leeftijd - 30) * 2, 0, 100)
         : 0;
       const carrosserieScore = berekenCarrosserieScore(voertuig.inrichting);
+      const eerderGezienScore = voertuig.gezienOp?.length ? EERDER_GEZIEN_BONUS : 0;
       const verhoudingLabel = tijdsfactor > 1
         ? `Pk/ton (tijd x${formatTijdsfactor(tijdsfactor)})`
         : "Pk/ton";
@@ -333,7 +418,8 @@
         { label: verhoudingLabel, score: verhoudingScore },
         { label: "Carrosserie", score: carrosserieScore },
         { label: "Prijs", score: prijsScore },
-        { label: "Klassieker", score: klassiekerScore }
+        { label: "Klassieker", score: klassiekerScore },
+        { label: "Eerder gezien", score: eerderGezienScore }
       ].filter(onderdeel => onderdeel.score > 0);
       const totaal = onderdelen.reduce((som, onderdeel) => som + onderdeel.score, 0);
 
@@ -356,7 +442,7 @@
       return perKenteken;
     }
 
-    function verrijkVoertuig(voertuig, brandstofRecords, huidigJaar) {
+    function verrijkVoertuig(voertuig, brandstofRecords, gezienOp, huidigJaar) {
       const brandstoffen = [...new Set(
         brandstofRecords.map(record => record.brandstof_omschrijving).filter(Boolean)
       )];
@@ -381,6 +467,7 @@
         : Math.round(vermogenPk / (massaKg / 1000));
       const verrijktVoertuig = {
         ...voertuig,
+        gezienOp,
         brandstof_omschrijving: brandstoffen.join(" + ") || null,
         co2_uitstoot_gecombineerd: maximumVeldwaarde(
           brandstofRecords,
@@ -402,13 +489,14 @@
       };
     }
 
-    function verrijkVoertuigen(voertuigen, brandstofGegevens) {
+    function verrijkVoertuigen(voertuigen, brandstofGegevens, kentekenHistorie) {
       const brandstofPerKenteken = groepeerBrandstofOpKenteken(brandstofGegevens);
       const huidigJaar = new Date().getFullYear();
       return voertuigen.map(voertuig =>
         verrijkVoertuig(
           voertuig,
           brandstofPerKenteken.get(voertuig.kenteken) ?? [],
+          kentekenHistorie.get(voertuig.kenteken) ?? [],
           huidigJaar
         )
       );
@@ -643,10 +731,12 @@
       div.className = "bg-gray-800 rounded-2xl p-4 shadow-lg";
 
       const kenteken = v.kenteken ?? "-";
-      const autoweekUrl = `https://www.autoweek.nl/kentekencheck/${formatted}/`;
-      const googleUrl = maakGoogleZoekUrl(v, kenteken);
+      const geformatteerdKenteken = formatKenteken(kenteken);
+      const autoweekUrl = `https://www.autoweek.nl/kentekencheck/${geformatteerdKenteken}/`;
+      const googleUrl = maakGoogleZoekUrl(v, geformatteerdKenteken);
       const score = formatScore(v.bijzonderheidsscore);
       const scoreUitleg = formatScoreOnderdelen(v.scoreOnderdelen);
+      const gezienOp = formatGezienOp(v.gezienOp);
       const vermogen = v.vermogenPk === null || v.vermogenPk === undefined
         ? "Onbekend"
         : `${v.vermogenPk} pk (${formatGetal(v.vermogenKw)} kW)`;
@@ -657,13 +747,17 @@
 
       div.innerHTML = `
         <div class="flex justify-between items-start mb-2">
-          <span class="text-yellow-400 font-bold text-xl tracking-widest">${formatted}</span>
+          <span class="text-yellow-400 font-bold text-xl tracking-widest">${geformatteerdKenteken}</span>
           <div class="text-right">
             <div class="text-yellow-400 font-bold text-lg">🏆 ${score.waarde}</div>
             <div class="text-xs text-gray-400">${score.label}</div>
           </div>
         </div>
         <div class="text-white text-lg font-semibold">${v.merk ?? ""} ${v.handelsbenaming ?? ""}</div>
+        ${gezienOp ? `
+          <div class="mt-2 rounded-lg bg-yellow-400/10 px-3 py-2 text-sm text-yellow-300">
+            <span class="font-semibold">Seen-before:</span> ${gezienOp}
+          </div>` : ""}
         <div class="mt-2 grid grid-cols-2 gap-1 text-sm text-gray-300">
           ${rij("🎨 Kleur", v.eerste_kleur)}
           ${rij("📅 Toelating", formatDatum(v.datum_eerste_toelating))}
@@ -689,6 +783,17 @@
     function formatCarrosserie(inrichting) {
       if (!inrichting || inrichting === "Niet geregistreerd") return null;
       return inrichting.charAt(0).toUpperCase() + inrichting.slice(1);
+    }
+
+    function formatGezienOp(datums) {
+      if (!datums?.length) return "";
+      const uniekeDatums = new Set();
+      for (const datum of datums) {
+        uniekeDatums.add(datum.toISOString().slice(0, 10));
+      }
+      return [...uniekeDatums]
+        .map(datum => formatDatum(datum.replaceAll("-", "")))
+        .join(", ");
     }
 
     function formatScoreOnderdelen(onderdelen) {
