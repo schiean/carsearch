@@ -736,7 +736,7 @@
       const googleUrl = maakGoogleZoekUrl(v, geformatteerdKenteken);
       const score = formatScore(v.bijzonderheidsscore);
       const scoreUitleg = formatScoreOnderdelen(v.scoreOnderdelen);
-      const gezienOp = formatGezienOp(v.gezienOp);
+      const gezienMelding = formatGezienMelding(v.gezienOp);
       const vermogen = v.vermogenPk === null || v.vermogenPk === undefined
         ? "Onbekend"
         : `${v.vermogenPk} pk (${formatGetal(v.vermogenKw)} kW)`;
@@ -754,9 +754,9 @@
           </div>
         </div>
         <div class="text-white text-lg font-semibold">${v.merk ?? ""} ${v.handelsbenaming ?? ""}</div>
-        ${gezienOp ? `
+        ${gezienMelding ? `
           <div class="mt-2 rounded-lg bg-yellow-400/10 px-3 py-2 text-sm text-yellow-300">
-            <span class="font-semibold">Seen-before:</span> ${gezienOp}
+            <span class="font-semibold">${gezienMelding}</span>
           </div>` : ""}
         <div class="mt-2 grid grid-cols-2 gap-1 text-sm text-gray-300">
           ${rij("🎨 Kleur", v.eerste_kleur)}
@@ -785,15 +785,18 @@
       return inrichting.charAt(0).toUpperCase() + inrichting.slice(1);
     }
 
-    function formatGezienOp(datums) {
+    function formatGezienMelding(datums) {
       if (!datums?.length) return "";
       const uniekeDatums = new Set();
       for (const datum of datums) {
         uniekeDatums.add(datum.toISOString().slice(0, 10));
       }
-      return [...uniekeDatums]
-        .map(datum => formatDatum(datum.replaceAll("-", "")))
-        .join(", ");
+      const geformatteerdeDatums = [...uniekeDatums]
+        .map(datum => formatDatum(datum.replaceAll("-", "")));
+      if (geformatteerdeDatums.length === 1) {
+        return `Seen before! ${geformatteerdeDatums[0]}`;
+      }
+      return `Seen ${geformatteerdeDatums.length} times before! Most recent: ${geformatteerdeDatums[0]}. First time: ${geformatteerdeDatums.at(-1)}`;
     }
 
     function formatScoreOnderdelen(onderdelen) {
